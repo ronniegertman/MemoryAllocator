@@ -5,12 +5,14 @@
 * do no edit lines below!
 =============================================================================*/
 #include <stddef.h> //for size_t
+#include <stdbool.h> //for bool
 
 //Part A - single thread memory allocator
 void* customMalloc(size_t size);
 void customFree(void* ptr);
 void* customCalloc(size_t nmemb, size_t size);
 void* customRealloc(void* ptr, size_t size);
+void* bestFit(size_t size);
 
 //Part B - multi thread memory allocator
 void* customMTMalloc(size_t size);
@@ -38,10 +40,12 @@ void heapKill();
 //suggestion for block usage - feel free to change this
 typedef struct Block
 {
-    size_t size;
+    size_t size; // in bytes
     struct Block* next;
+    struct Block* prev;
     bool free;
 } Block;
 extern Block* blockList;
+
 
 #endif // CUSTOM_ALLOCATOR
