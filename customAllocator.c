@@ -269,6 +269,15 @@ void* customRealloc(void* ptr, size_t size){
         return newPtr;
     }
     else { // size > oldSize
+        if(block == lastBlock){
+            size_t newSize = ALIGN_TO_MULT_OF_4(size);
+            if(newSize == oldSize){
+                return ptr;
+            }
+            sbrk(newSize - oldSize);
+            lastBlock->size = newSize;
+            return ptr;
+        }
         void* newPtr = customMalloc(size);
         if(newPtr == NULL){
             return NULL;
