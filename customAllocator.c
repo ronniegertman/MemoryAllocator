@@ -4,6 +4,7 @@
 #include <stdio.h> //for printf
 #include <stdint.h> //for intptr_t
 #include <unistd.h> //for sbrk
+#include <string.h> //for memset
 
 Block* blockList = NULL; // global
 Block* lastBlock = NULL; // global 
@@ -209,4 +210,13 @@ void customFree(void *ptr) {
             sbrk(-shrink); // if you want: check (void*)-1 for failure
         }
     }
+}
+
+void* customCalloc(size_t nmemb, size_t size){
+    void* ptr = customMalloc(nmemb * size);
+    if(ptr == NULL){
+        return NULL;
+    }
+    memset(ptr, 0, nmemb * size);
+    return ptr;
 }
