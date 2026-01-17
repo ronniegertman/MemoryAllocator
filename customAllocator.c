@@ -6,6 +6,8 @@
 #include <unistd.h> //for sbrk
 #include <string.h> //for memset
 
+//TODO: check if sbrk fails when out of memory
+
 Block* blockList = NULL; // global
 Block* lastBlock = NULL; // global 
 
@@ -219,4 +221,60 @@ void* customCalloc(size_t nmemb, size_t size){
     }
     memset(ptr, 0, nmemb * size);
     return ptr;
+}
+
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+
+void* customRealloc(void* ptr, size_t size){
+    if (ptr == NULL) {
+        return customMalloc(size);
+    }
+
+    // Avoid void* comparisons
+    char *heapEnd = (char *)sbrk(0);
+
+    // Minimal sanity: ptr must be below current program break
+    if ((char *)ptr >= heapEnd || (char *)ptr < (char *)blockList) {
+        printf("<realloc error>: passed non-heap pointer\n");
+        return NULL;
+    }
+
+    Block *block = findBlock(ptr);
+    if (block == NULL) {
+        printf("<realloc error>: passed non-heap pointer\n");
+        return NULL;
+    }
+    if(size == 0){
+        customFree(ptr);
+        return NULL;
+    }
+
+    size_t oldSize = block->size;
+    if (size <= oldSize) {
+        if(block == lastBlock){
+            size_t newSize = ALIGN_TO_MULT_OF_4(size);
+            if(newSize == oldSize){
+                return ptr;
+            }
+            sbrk(newSize - oldSize);
+            lastBlock->size = newSize;
+            return ptr;
+        }
+        void* newPtr = customMalloc(size);
+        if(newPtr == NULL){
+            return NULL;
+        }
+        memcpy(newPtr, ptr, size);
+        customFree(ptr);
+        return newPtr;
+    }
+    else { // size > oldSize
+        void* newPtr = customMalloc(size);
+        if(newPtr == NULL){
+            return NULL;
+        }
+        memcpy(newPtr, ptr, oldSize);
+        customFree(ptr);
+        return newPtr;
+    }
 }
