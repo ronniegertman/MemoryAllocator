@@ -10,6 +10,9 @@
 
 Block* blockList = NULL; // global
 Block* lastBlock = NULL; // global 
+MemoryArea* memoryAreaList = NULL; // global
+MemoryArea* lastMemoryArea = NULL; // global
+pthread_mutex_t memoryAreaListMutex = PTHREAD_MUTEX_INITIALIZER;
 
 void* bestFit(size_t size){
     Block* current = blockList;
@@ -286,4 +289,64 @@ void* customRealloc(void* ptr, size_t size){
         customFree(ptr);
         return newPtr;
     }
+}
+
+void freeMemoryAreaList(){
+    MemoryArea* current = memoryAreaList;
+    while(current != NULL){
+        MemoryArea* next = current->next;
+        customFree(current->dataPtr);
+        customFree(current);
+        current = next;
+    }
+    memoryAreaList = NULL;
+}
+
+void heapCreate(){
+    pthread_mutex_init(&memoryAreaListMutex, NULL);
+    pthread_mutex_lock(&memoryAreaListMutex);
+
+    for (int i = 0; i < 8; i++){
+        MemoryArea* newMemoryArea = (MemoryArea*)customMalloc(sizeof(MemoryArea));
+        if(newMemoryArea == NULL){
+            freeMemoryAreaList();
+            pthread_mutex_unlock(&memoryAreaListMutex);
+            return;
+        }
+        newMemoryArea->size = 4096;
+        newMemoryArea->freeMemory = 4096;
+        pthread_mutex_init(&newMemoryArea->mutex, NULL);
+        newMemoryArea->dataPtr = (void*)customMalloc(4096);
+        if(newMemoryArea->dataPtr == NULL){
+            customFree(newMemoryArea);
+            freeMemoryAreaList();
+            pthread_mutex_unlock(&memoryAreaListMutex);
+            return;
+        }
+        newMemoryArea->used = false;
+        newMemoryArea->next = NULL;
+        if(memoryAreaList == NULL){
+            memoryAreaList = newMemoryArea;
+        }else{
+            lastMemoryArea->next = newMemoryArea;
+        }
+        lastMemoryArea = newMemoryArea;
+    }
+
+    pthread_mutex_unlock(&memoryAreaListMutex);
+}
+
+void heapKill(){
+    pthread_mutex_lock(&memoryAreaListMutex);
+    if(memoryAreaList == NULL){
+        pthread_mutex_unlock(&memoryAreaListMutex);
+        return;
+    }
+    freeMemoryAreaList();
+    pthread_mutex_unlock(&memoryAreaListMutex);
+    pthread_mutex_destroy(&memoryAreaListMutex);
+}
+
+void* customMTMalloc(size_t size){
+
 }

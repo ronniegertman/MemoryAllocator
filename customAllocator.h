@@ -6,6 +6,7 @@
 =============================================================================*/
 #include <stddef.h> //for size_t
 #include <stdbool.h> //for bool
+#include <pthread.h> //for pthread_mutex_t
 
 //Part A - single thread memory allocator
 void* customMalloc(size_t size);
@@ -47,5 +48,17 @@ typedef struct Block
 } Block;
 extern Block* blockList;
 
+typedef struct MemoryArea
+{
+    size_t size;
+    size_t freeMemory;
+    pthread_mutex_t mutex;
+    void* dataPtr;
+    bool used;
+    struct MemoryArea* next;
+} MemoryArea;
+extern MemoryArea* memoryAreaList;
+extern MemoryArea* lastMemoryArea;
+extern pthread_mutex_t memoryAreaListMutex;
 
 #endif // CUSTOM_ALLOCATOR
