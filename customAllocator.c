@@ -291,15 +291,62 @@ void* customRealloc(void* ptr, size_t size){
     }
 }
 
+void freeMemoryArea(MemoryArea* memoryArea){
+    customFree(memoryArea->dataPtr);
+    // free the block list
+    BlockMT* current = memoryArea->blockList;
+    while(current != NULL){
+        BlockMT* next = current->next;
+        customFree(current);
+        current = next;
+    }
+    // free the memory area
+    customFree(memoryArea->dataPtr);
+    customFree(memoryArea);
+}
+
 void freeMemoryAreaList(){
     MemoryArea* current = memoryAreaList;
     while(current != NULL){
         MemoryArea* next = current->next;
-        customFree(current->dataPtr);
-        customFree(current);
+        freeMemoryArea(current);
         current = next;
     }
     memoryAreaList = NULL;
+}
+
+
+MemoryArea* createMemoryArea(size_t size){
+    MemoryArea* newMemoryArea = (MemoryArea*)customMalloc(sizeof(MemoryArea));
+    if(newMemoryArea == NULL){
+        return NULL;
+    }
+    // Initialize the area's data
+    newMemoryArea->dataPtr = (void*)customMalloc(size);
+    if(newMemoryArea->dataPtr == NULL){
+        customFree(newMemoryArea);
+        return NULL;
+    }
+    // Initialize the area's block list
+    newMemoryArea->blockList = (void*)customMalloc(sizeof(BlockMT));
+    if(newMemoryArea->blockList == NULL){
+        customFree(newMemoryArea->dataPtr);
+        customFree(newMemoryArea);
+        return NULL;
+    }
+    newMemoryArea->blockList->size = size;
+    newMemoryArea->blockList->free = true;
+    newMemoryArea->blockList->next = NULL;
+    newMemoryArea->blockList->prev = NULL;
+    newMemoryArea->blockList->dataPtr = newMemoryArea->dataPtr;
+
+    newMemoryArea->used = false;
+    newMemoryArea->size = size;
+    newMemoryArea->freeMemory = size;
+    pthread_mutex_init(&newMemoryArea->mutex, NULL);
+    newMemoryArea->next = NULL;
+
+    return newMemoryArea;
 }
 
 void heapCreate(){
@@ -307,24 +354,13 @@ void heapCreate(){
     pthread_mutex_lock(&memoryAreaListMutex);
 
     for (int i = 0; i < 8; i++){
-        MemoryArea* newMemoryArea = (MemoryArea*)customMalloc(sizeof(MemoryArea));
+        MemoryArea* newMemoryArea = createMemoryArea(4096);
         if(newMemoryArea == NULL){
             freeMemoryAreaList();
             pthread_mutex_unlock(&memoryAreaListMutex);
             return;
         }
-        newMemoryArea->size = 4096;
-        newMemoryArea->freeMemory = 4096;
-        pthread_mutex_init(&newMemoryArea->mutex, NULL);
-        newMemoryArea->dataPtr = (void*)customMalloc(4096);
-        if(newMemoryArea->dataPtr == NULL){
-            customFree(newMemoryArea);
-            freeMemoryAreaList();
-            pthread_mutex_unlock(&memoryAreaListMutex);
-            return;
-        }
-        newMemoryArea->used = false;
-        newMemoryArea->next = NULL;
+
         if(memoryAreaList == NULL){
             memoryAreaList = newMemoryArea;
         }else{
@@ -347,6 +383,64 @@ void heapKill(){
     pthread_mutex_destroy(&memoryAreaListMutex);
 }
 
-void* customMTMalloc(size_t size){
+BlockMT* bestFitMT(MemoryArea* memoryArea, size_t size){
+    BlockMT* current = memoryArea->blockList;
+    BlockMT* bestBlock = NULL;
+    size_t bestSize = (size_t)(-1); // highest possible size
+    while(current != NULL){
+        if(current->free && current->size >= size && current->size < bestSize){
+            bestBlock = current;
+            bestSize = current->size;
+        }
+    }
+    return bestBlock;
+}
 
+void* customMTMalloc(size_t size){
+    pthread_mutex_lock(&memoryAreaListMutex);
+    if(memoryAreaList == NULL){
+        pthread_mutex_unlock(&memoryAreaListMutex);
+        return NULL;
+    }
+
+    BlockMT* bestBlock = NULL;
+    while(memoryAreaList != NULL){
+        bestBlock = bestFitMT(memoryAreaList, size);
+        if(bestBlock != NULL){
+            break;
+        }
+        // Add a new memory area to the list
+        lastMemoryArea->next = createMemoryArea(4096);
+        lastMemoryArea = lastMemoryArea->next;
+        
+        // Rotate the memory area list (putting first area last)
+        lastMemoryArea->next = memoryAreaList;
+        lastMemoryArea = lastMemoryArea->next;
+        lastMemoryArea->next = NULL;
+        memoryAreaList = memoryAreaList->next;
+    }
+    pthread_mutex_unlock(&memoryAreaListMutex);
+
+    pthread_mutex_lock(&memoryAreaList->mutex);
+    size_t newBlockSize = bestBlock->size - ALIGN_TO_MULT_OF_4(size);
+    bestBlock->free = false;
+    bestBlock->size = ALIGN_TO_MULT_OF_4(size);
+    if(newBlockSize > 0){
+        // split the block into two blocks
+        pthread_mutex_lock(&memoryAreaListMutex);
+        BlockMT* newBlock = (BlockMT*)customMalloc(sizeof(BlockMT));
+        pthread_mutex_unlock(&memoryAreaListMutex);
+        if(newBlock == NULL){
+            pthread_mutex_unlock(&memoryAreaList->mutex);
+            return NULL;
+        }
+        newBlock->size = newBlockSize;
+        newBlock->free = true;
+        newBlock->prev = bestBlock;
+        newBlock->next = bestBlock->next;
+        newBlock->next->prev = newBlock;
+        newBlock->dataPtr = (void*)((char*)bestBlock->dataPtr + bestBlock->size + 1);
+    }
+    pthread_mutex_unlock(&memoryAreaList->mutex);
+    return (void*)(bestBlock->dataPtr);
 }

@@ -48,13 +48,23 @@ typedef struct Block
 } Block;
 extern Block* blockList;
 
+typedef struct BlockMT
+{
+    size_t size; // in bytes
+    struct BlockMT* next;
+    struct BlockMT* prev;
+    bool free;
+    void* dataPtr;
+} BlockMT;
+
 typedef struct MemoryArea
 {
     size_t size;
-    size_t freeMemory;
+    size_t freeMemory; // to delete
     pthread_mutex_t mutex;
     void* dataPtr;
-    bool used;
+    BlockMT* blockList;
+    bool used; // to delete
     struct MemoryArea* next;
 } MemoryArea;
 extern MemoryArea* memoryAreaList;
