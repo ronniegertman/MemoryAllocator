@@ -93,19 +93,19 @@ void customFree(void *ptr) {
 
     // If blockList is NULL, allocator has no heap blocks yet
     if (blockList == NULL) {
-        printf("<free error>: passed non-heap pointer 1\n");
+        printf("<free error>: passed non-heap pointer\n");
         return;
     }
 
     // Minimal sanity: ptr must be below current program break
     if ((char *)ptr >= heapEnd) {
-        printf("<free error>: passed non-heap pointer 2\n");
+        printf("<free error>: passed non-heap pointer\n");
         return;
     }
 
     Block *block = findBlock(ptr);
     if (block == NULL) {
-        printf("<free error>: passed non-heap pointer 3\n");
+        printf("<free error>: passed non-heap pointer\n");
         return;
     }
 
@@ -299,7 +299,6 @@ void heapCreate(){
     for (int i = 0; i < 8; i++){
         MemoryArea* newMemoryArea = createMemoryArea(4096);
         if(newMemoryArea == NULL){
-            printf("Failed to create memory area\n");
             freeMemoryAreaList();
             pthread_mutex_unlock(&memoryAreaListMutex);
             return;
@@ -343,9 +342,7 @@ BlockMT* bestFitMT(MemoryArea* memoryArea, size_t size){
 
 void* customMTMalloc(size_t size, int threadNumber){
     pthread_mutex_lock(&memoryAreaListMutex);
-    printf("Locked memoryAreaListMutex in customMTMalloc for thread %d\n", threadNumber);
     if(memoryAreaList == NULL){
-        printf("Memory area list is NULL in customMTMalloc for thread %d\n", threadNumber);
         pthread_mutex_unlock(&memoryAreaListMutex);
         return NULL;
     }
@@ -353,12 +350,9 @@ void* customMTMalloc(size_t size, int threadNumber){
     BlockMT* bestBlock = NULL;
     bool queueHeadHasNoSpace = false;
     while(memoryAreaList != NULL){
-        printf("Checking best fit MT for thread %d\n", threadNumber);
         bestBlock = bestFitMT(memoryAreaList, size);
-        printf("Best block found for thread %d: %p\n", threadNumber, bestBlock);
         if(bestBlock == NULL && !queueHeadHasNoSpace){
             // Add a new memory area to the list
-            printf("Adding new memory area to the list for thread %d\n", threadNumber);
             lastMemoryArea->next = createMemoryArea(4096);
             lastMemoryArea = lastMemoryArea->next;
             queueHeadHasNoSpace = true;
@@ -374,23 +368,17 @@ void* customMTMalloc(size_t size, int threadNumber){
             break;
         }
     }
-    printf("Unlocking memoryAreaListMutex in customMTMalloc for thread %d\n", threadNumber);
     pthread_mutex_unlock(&memoryAreaListMutex);
 
     pthread_mutex_lock(&memoryAreaList->mutex);
-    printf("Locked memoryAreaList->mutex in customMTMalloc for thread %d\n", threadNumber);
     size_t newBlockSize = bestBlock->size - ALIGN_TO_MULT_OF_4(size);
-    printf("New block size: %zu\n", newBlockSize);
     bestBlock->free = false;
     if(newBlockSize > 0){
         // split the block into two blocks
         pthread_mutex_lock(&memoryAreaListMutex);
-        printf("Locked memoryAreaListMutex in customMalloc for thread %d\n", threadNumber);
         BlockMT* newBlock = (BlockMT*)customMalloc(sizeof(BlockMT));
-        printf("unlocking memoryAreaListMutex in customMalloc for thread %d\n", threadNumber);
         pthread_mutex_unlock(&memoryAreaListMutex);
         if(newBlock == NULL){
-            printf("Failed to allocate new block in customMalloc for thread %d\n", threadNumber);
             pthread_mutex_unlock(&memoryAreaList->mutex);
             return NULL;
         }
@@ -408,13 +396,6 @@ void* customMTMalloc(size_t size, int threadNumber){
             newBlock->next->prev = newBlock;
         }
     }
-    // printing block list
-    BlockMT* current = lastMemoryArea->blockList;
-    while(current != NULL){
-        printf("Block: %p, Size: %zu, Free: %d, DataPtr: %p\n", current, current->size, current->free, current->dataPtr);
-        current = current->next;
-    }
-    printf("Unlocking memoryAreaList->mutex in customMTMalloc for thread %d\n", threadNumber);
 
     pthread_mutex_unlock(&memoryAreaList->mutex);
     return (void*)(bestBlock->dataPtr);
