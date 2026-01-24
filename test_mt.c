@@ -10,10 +10,10 @@ void test_single_thread() {
     // printf("Testing single thread\n");
     heapCreate();
 
-    void* ptr = customMTMalloc(1024);
+    void* ptr = customMTMalloc(1024, 1);
     printf("Allocated %p\n", ptr);
     // print block list
-    customMTFree(ptr);
+    customMTFree(ptr, 1);
     printf("Freed %p\n", ptr);
     heapKill();
 }
@@ -35,16 +35,34 @@ void *worker(void *p) {
   // your code that uses your allocator-sensitive logic
 
   printf("Thread %d allocating...\n", a->threadNumber);
-  void* ptr = customMTMalloc(1024);
+  void* ptr = customMTCalloc(4, 1024, a->threadNumber);
+  printf("Thread %d allocated %p\n", a->threadNumber, ptr);
+  memset(ptr, 0, 4096);
+  customMTFree(ptr, a->threadNumber);
+  printf("Thread %d freed %p\n", a->threadNumber, ptr);
+  return NULL;
+}
+
+
+// worker that tests customMTMalloc, customMTRealloc, customMTFree
+void *worker_realloc(void *p) {
+  worker_arg_t *a = (worker_arg_t *)p;
+  pthread_barrier_wait(a->start_barrier);
+
+  printf("Thread %d allocating...\n", a->threadNumber);
+  void* ptr = customMTMalloc(1024, a->threadNumber);
   printf("Thread %d allocated %p\n", a->threadNumber, ptr);
   memset(ptr, 0, 1024);
-  customMTFree(ptr);
+  void* ptr2 = customMTRealloc(ptr, 2048, a->threadNumber);
+  printf("Thread %d reallocated %p\n", a->threadNumber, ptr2);
+  memset(ptr2, 1, 2048);
+  customMTFree(ptr, a->threadNumber);
   printf("Thread %d freed %p\n", a->threadNumber, ptr);
   return NULL;
 }
 
 int test_threads(void) {
-  const int N = 9;
+  const int N = 100;
   pthread_t th[N];
   worker_arg_t args[N];
 

@@ -14,6 +14,7 @@ Block* lastBlock = NULL; // global
 MemoryArea* memoryAreaList = NULL; // global
 MemoryArea* lastMemoryArea = NULL; // global
 pthread_mutex_t memoryAreaListMutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t heapSizeModificationMutex = PTHREAD_MUTEX_INITIALIZER;
 
 void* bestFit(size_t size){
     Block* current = blockList;
@@ -260,6 +261,7 @@ void freeMemoryAreaList(){
 
 
 MemoryArea* createMemoryArea(size_t size){
+    // locking before function call
     MemoryArea* newMemoryArea = (MemoryArea*)customMalloc(sizeof(MemoryArea));
     if(newMemoryArea == NULL){
         return NULL;
@@ -297,7 +299,6 @@ MemoryArea* createMemoryArea(size_t size){
 }
 
 void heapCreate(){
-    // pthread_mutex_init(&memoryAreaListMutex, NULL);
     pthread_mutex_lock(&memoryAreaListMutex);
 
     for (int i = 0; i < 8; i++){
@@ -327,13 +328,15 @@ void heapKill(){
     }
     freeMemoryAreaList();
     pthread_mutex_unlock(&memoryAreaListMutex);
+
     pthread_mutex_destroy(&memoryAreaListMutex);
+    pthread_mutex_destroy(&heapSizeModificationMutex);
 }
 
 BlockMT* bestFitMT(MemoryArea* memoryArea, size_t size){
-    BlockMT* current = memoryArea->blockList;
     BlockMT* bestBlock = NULL;
     size_t bestSize = (size_t)(-1); // highest possible size
+    BlockMT* current = memoryArea->blockList;
     while(current != NULL){
         if(current->free && current->size >= size && current->size < bestSize){
             bestBlock = current;
@@ -344,7 +347,7 @@ BlockMT* bestFitMT(MemoryArea* memoryArea, size_t size){
     return bestBlock;
 }
 
-void* customMTMalloc(size_t size){
+void* customMTMalloc(size_t size, int threadId){
     if(size > 4096){
         printf("<malloc error>: requested size is too large\n");
         return NULL;
@@ -358,10 +361,18 @@ void* customMTMalloc(size_t size){
     BlockMT* bestBlock = NULL;
     bool queueHeadHasNoSpace = false;
     while(memoryAreaList != NULL){
+        pthread_mutex_lock(&memoryAreaList->mutex);
         bestBlock = bestFitMT(memoryAreaList, size);
+        pthread_mutex_unlock(&memoryAreaList->mutex);
         if(bestBlock == NULL && !queueHeadHasNoSpace){
             // Add a new memory area to the list
+            pthread_mutex_lock(&heapSizeModificationMutex);
             lastMemoryArea->next = createMemoryArea(4096);
+            pthread_mutex_unlock(&heapSizeModificationMutex);
+            if(lastMemoryArea->next == NULL){
+                pthread_mutex_unlock(&memoryAreaListMutex);
+                return NULL;
+            }
             lastMemoryArea = lastMemoryArea->next;
             queueHeadHasNoSpace = true;
         }
@@ -376,16 +387,16 @@ void* customMTMalloc(size_t size){
             break;
         }
     }
+    pthread_mutex_lock(&memoryAreaList->mutex);
     pthread_mutex_unlock(&memoryAreaListMutex);
 
-    pthread_mutex_lock(&memoryAreaList->mutex);
     size_t newBlockSize = bestBlock->size - ALIGN_TO_MULT_OF_4(size);
     bestBlock->free = false;
     if(newBlockSize > 0){
         // split the block into two blocks
-        pthread_mutex_lock(&memoryAreaListMutex);
+        pthread_mutex_lock(&heapSizeModificationMutex);
         BlockMT* newBlock = (BlockMT*)customMalloc(sizeof(BlockMT));
-        pthread_mutex_unlock(&memoryAreaListMutex);
+        pthread_mutex_unlock(&heapSizeModificationMutex);
         if(newBlock == NULL){
             pthread_mutex_unlock(&memoryAreaList->mutex);
             return NULL;
@@ -412,12 +423,9 @@ void* customMTMalloc(size_t size){
 MemoryArea* findMemoryArea(void* ptr){
     MemoryArea* current = memoryAreaList;
     while(current != NULL){
-        pthread_mutex_lock(&current->mutex);
         if(ptr >= current->dataPtr && ptr < (void*)((char*)current->dataPtr + current->size)){
-            pthread_mutex_unlock(&current->mutex);
             return current;
         }
-        pthread_mutex_unlock(&current->mutex);
         current = current->next;
     }
     return NULL;
@@ -434,7 +442,7 @@ BlockMT* findBlockMT(MemoryArea* memoryArea, void* ptr){
     return NULL;
 }
 
-void customMTFree(void* ptr){
+void customMTFree(void* ptr, int threadId){
     if(ptr == NULL){
         printf("<free error>: passed null pointer\n");
         return;
@@ -452,8 +460,8 @@ void customMTFree(void* ptr){
         pthread_mutex_unlock(&memoryAreaListMutex);
         return;
     }
-    pthread_mutex_unlock(&memoryAreaListMutex);
     pthread_mutex_lock(&memoryArea->mutex);
+    pthread_mutex_unlock(&memoryAreaListMutex);
 
     BlockMT* block = findBlockMT(memoryArea, ptr);
     if(block == NULL){
@@ -476,9 +484,9 @@ void customMTFree(void* ptr){
         if(block->next != NULL){
             block->next->prev = block;
         }
-        pthread_mutex_lock(&memoryAreaListMutex);
+        pthread_mutex_lock(&heapSizeModificationMutex);
         customFree(nextBlock);
-        pthread_mutex_unlock(&memoryAreaListMutex);
+        pthread_mutex_unlock(&heapSizeModificationMutex);
     }
     // 2) Coalesce with PREV if free
     if(block->prev != NULL && block->prev->free){
@@ -488,15 +496,15 @@ void customMTFree(void* ptr){
         if(prevBlock->next != NULL){
             prevBlock->next->prev = prevBlock;
         }
-        pthread_mutex_lock(&memoryAreaListMutex);
+        pthread_mutex_lock(&heapSizeModificationMutex);
         customFree(block);
-        pthread_mutex_unlock(&memoryAreaListMutex);
+        pthread_mutex_unlock(&heapSizeModificationMutex);
     }
     pthread_mutex_unlock(&memoryArea->mutex);
 }
 
-void* customMTCalloc(size_t nmemb, size_t size){
-    void* ptr = customMTMalloc(nmemb * size);
+void* customMTCalloc(size_t nmemb, size_t size, int threadId){
+    void* ptr = customMTMalloc(nmemb * size, threadId);
     if(ptr == NULL){
         return NULL;
     }
@@ -504,9 +512,9 @@ void* customMTCalloc(size_t nmemb, size_t size){
     return ptr;
 }
 
-void* customMTRealloc(void* ptr, size_t size){
+void* customMTRealloc(void* ptr, size_t size, int threadId){
     if(ptr == NULL){
-        return customMTMalloc(size);
+        return customMTMalloc(size, threadId);
     }
 
     pthread_mutex_lock(&memoryAreaListMutex);
@@ -543,19 +551,19 @@ void* customMTRealloc(void* ptr, size_t size){
         return ptr;
     }
     if(block->size < newSize){
-        void* newPtr = customMTMalloc(newSize);
+        void* newPtr = customMTMalloc(newSize, threadId);
         if(newPtr == NULL){
             return NULL;
         }
         memcpy(newPtr, ptr, block->size);
-        customMTFree(ptr);
+        customMTFree(ptr, threadId);
         return newPtr;
     }
 
     // split the block into two blocks
-    pthread_mutex_lock(&memoryAreaListMutex);
+    pthread_mutex_lock(&heapSizeModificationMutex);
     BlockMT* newBlock = (BlockMT*)customMalloc(sizeof(BlockMT));
-    pthread_mutex_unlock(&memoryAreaListMutex);
+    pthread_mutex_unlock(&heapSizeModificationMutex);
     if(newBlock == NULL){
         pthread_mutex_unlock(&memoryArea->mutex);
         return NULL;

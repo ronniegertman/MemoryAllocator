@@ -16,10 +16,10 @@ void* customRealloc(void* ptr, size_t size);
 void* bestFit(size_t size);
 
 //Part B - multi thread memory allocator
-void* customMTMalloc(size_t size);
-void customMTFree(void* ptr);
-void* customMTCalloc(size_t nmemb, size_t size);
-void* customMTRealloc(void* ptr, size_t size);
+void* customMTMalloc(size_t size, int threadId);
+void customMTFree(void* ptr, int threadId);
+void* customMTCalloc(size_t nmemb, size_t size, int threadId);
+void* customMTRealloc(void* ptr, size_t size, int threadId);
 
 // Part B - helper functions for multi thread memory allocator
 void heapCreate();
@@ -68,5 +68,6 @@ typedef struct MemoryArea
 extern MemoryArea* memoryAreaList;
 extern MemoryArea* lastMemoryArea;
 extern pthread_mutex_t memoryAreaListMutex;
+extern pthread_mutex_t heapSizeModificationMutex;
 
 #endif // CUSTOM_ALLOCATOR
