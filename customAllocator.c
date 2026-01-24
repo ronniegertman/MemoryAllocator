@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "customAllocator.h"
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdio.h> //for printf
 #include <stdint.h> //for intptr_t
@@ -392,6 +393,7 @@ BlockMT* bestFitMT(MemoryArea* memoryArea, size_t size){
             bestBlock = current;
             bestSize = current->size;
         }
+        current = current->next;
     }
     return bestBlock;
 }
@@ -438,7 +440,9 @@ void* customMTMalloc(size_t size){
         newBlock->free = true;
         newBlock->prev = bestBlock;
         newBlock->next = bestBlock->next;
-        newBlock->next->prev = newBlock;
+        if (newBlock->next != NULL){
+            newBlock->next->prev = newBlock;
+        }
         newBlock->dataPtr = (void*)((char*)bestBlock->dataPtr + bestBlock->size + 1);
     }
     pthread_mutex_unlock(&memoryAreaList->mutex);
