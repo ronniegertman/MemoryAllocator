@@ -9,6 +9,9 @@
 
 //TODO: check if sbrk fails when out of memory
 
+
+#define DEFAULT_MEMORY_AREA_SIZE (4096)
+
 Block* blockList = NULL; // global
 Block* lastBlock = NULL; // global 
 MemoryArea* memoryAreaList = NULL; // global
@@ -308,7 +311,7 @@ void heapCreate(){
     pthread_mutex_lock(&memoryAreaListMutex);
 
     for (int i = 0; i < 8; i++){
-        MemoryArea* newMemoryArea = createMemoryArea(4096);
+        MemoryArea* newMemoryArea = createMemoryArea(DEFAULT_MEMORY_AREA_SIZE);
         if(newMemoryArea == NULL){
             freeMemoryAreaList();
             pthread_mutex_unlock(&memoryAreaListMutex);
@@ -354,7 +357,7 @@ BlockMT* bestFitMT(MemoryArea* memoryArea, size_t size){
 }
 
 void* customMTMalloc(size_t size, int threadId){
-    if(size > 4096){
+    if(size > DEFAULT_MEMORY_AREA_SIZE){
         printf("<malloc error>: requested size is too large\n");
         return NULL;
     }
@@ -374,7 +377,7 @@ void* customMTMalloc(size_t size, int threadId){
         if(bestBlock == NULL && !queueHeadHasNoSpace){
             // Add a new memory area to the list
             pthread_mutex_lock(&heapSizeModificationMutex);
-            lastMemoryArea->next = createMemoryArea(4096);
+            lastMemoryArea->next = createMemoryArea(DEFAULT_MEMORY_AREA_SIZE);
             pthread_mutex_unlock(&heapSizeModificationMutex);
             if(lastMemoryArea->next == NULL){
                 pthread_mutex_unlock(&memoryAreaListMutex);
