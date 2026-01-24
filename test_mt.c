@@ -10,11 +10,11 @@ void test_single_thread() {
     // printf("Testing single thread\n");
     heapCreate();
 
-    void* ptr = customMTMalloc(1024, 1);
+    void* ptr = customMTMalloc(1024);
     printf("Allocated %p\n", ptr);
     // print block list
-    // customMTFree(ptr);
-    // printf("Freed %p\n", ptr);
+    customMTFree(ptr);
+    printf("Freed %p\n", ptr);
     heapKill();
 }
 
@@ -35,9 +35,11 @@ void *worker(void *p) {
   // your code that uses your allocator-sensitive logic
 
   printf("Thread %d allocating...\n", a->threadNumber);
-  void* ptr = customMTMalloc(1024, a->threadNumber);
+  void* ptr = customMTMalloc(1024);
   printf("Thread %d allocated %p\n", a->threadNumber, ptr);
   memset(ptr, 0, 1024);
+  customMTFree(ptr);
+  printf("Thread %d freed %p\n", a->threadNumber, ptr);
   return NULL;
 }
 

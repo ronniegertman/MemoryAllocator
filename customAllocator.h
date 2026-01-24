@@ -16,7 +16,7 @@ void* customRealloc(void* ptr, size_t size);
 void* bestFit(size_t size);
 
 //Part B - multi thread memory allocator
-void* customMTMalloc(size_t size, int threadNumber);
+void* customMTMalloc(size_t size);
 void customMTFree(void* ptr);
 void* customMTCalloc(size_t nmemb, size_t size);
 void* customMTRealloc(void* ptr, size_t size);
@@ -60,11 +60,9 @@ typedef struct BlockMT
 typedef struct MemoryArea
 {
     size_t size;
-    size_t freeMemory; // to delete
     pthread_mutex_t mutex;
     void* dataPtr;
     BlockMT* blockList;
-    bool used; // to delete
     struct MemoryArea* next;
 } MemoryArea;
 extern MemoryArea* memoryAreaList;

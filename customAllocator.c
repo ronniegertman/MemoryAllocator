@@ -283,10 +283,14 @@ MemoryArea* createMemoryArea(size_t size){
     newMemoryArea->blockList->prev = NULL;
     newMemoryArea->blockList->dataPtr = newMemoryArea->dataPtr;
 
-    newMemoryArea->used = false;
     newMemoryArea->size = size;
-    newMemoryArea->freeMemory = size;
-    pthread_mutex_init(&newMemoryArea->mutex, NULL);
+
+    pthread_mutexattr_t attr;
+    pthread_mutexattr_init(&attr);
+    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+    pthread_mutex_init(&newMemoryArea->mutex, &attr);
+    pthread_mutexattr_destroy(&attr);
+
     newMemoryArea->next = NULL;
 
     return newMemoryArea;
@@ -340,7 +344,11 @@ BlockMT* bestFitMT(MemoryArea* memoryArea, size_t size){
     return bestBlock;
 }
 
-void* customMTMalloc(size_t size, int threadNumber){
+void* customMTMalloc(size_t size){
+    if(size > 4096){
+        printf("<malloc error>: requested size is too large\n");
+        return NULL;
+    }
     pthread_mutex_lock(&memoryAreaListMutex);
     if(memoryAreaList == NULL){
         pthread_mutex_unlock(&memoryAreaListMutex);
@@ -399,4 +407,169 @@ void* customMTMalloc(size_t size, int threadNumber){
 
     pthread_mutex_unlock(&memoryAreaList->mutex);
     return (void*)(bestBlock->dataPtr);
+}
+
+MemoryArea* findMemoryArea(void* ptr){
+    MemoryArea* current = memoryAreaList;
+    while(current != NULL){
+        pthread_mutex_lock(&current->mutex);
+        if(ptr >= current->dataPtr && ptr < (void*)((char*)current->dataPtr + current->size)){
+            pthread_mutex_unlock(&current->mutex);
+            return current;
+        }
+        pthread_mutex_unlock(&current->mutex);
+        current = current->next;
+    }
+    return NULL;
+}
+
+BlockMT* findBlockMT(MemoryArea* memoryArea, void* ptr){
+    BlockMT* current = memoryArea->blockList;
+    while(current != NULL){
+        if(current->dataPtr == ptr){
+            return current;
+        }
+        current = current->next;
+    }
+    return NULL;
+}
+
+void customMTFree(void* ptr){
+    if(ptr == NULL){
+        printf("<free error>: passed null pointer\n");
+        return;
+    }
+
+    pthread_mutex_lock(&memoryAreaListMutex);
+    if(memoryAreaList == NULL){
+        printf("<free error>: passed non-heap pointer\n");
+        pthread_mutex_unlock(&memoryAreaListMutex);
+        return;
+    }
+    MemoryArea* memoryArea = findMemoryArea(ptr);
+    if(memoryArea == NULL){
+        printf("<free error>: passed non-heap pointer\n");
+        pthread_mutex_unlock(&memoryAreaListMutex);
+        return;
+    }
+    pthread_mutex_unlock(&memoryAreaListMutex);
+    pthread_mutex_lock(&memoryArea->mutex);
+
+    BlockMT* block = findBlockMT(memoryArea, ptr);
+    if(block == NULL){
+        printf("<free error>: passed non-heap pointer\n");
+        pthread_mutex_unlock(&memoryArea->mutex);
+        return;
+    }
+    if(block->free){
+        printf("<free error>: passed non-heap pointer\n");
+        pthread_mutex_unlock(&memoryArea->mutex);
+        return;
+    }
+    block->free = true;
+
+    // 1) Coalesce with NEXT if free
+    if(block->next != NULL && block->next->free){
+        BlockMT* nextBlock = block->next;
+        block->size = block->size + nextBlock->size;
+        block->next = nextBlock->next;
+        if(block->next != NULL){
+            block->next->prev = block;
+        }
+        pthread_mutex_lock(&memoryAreaListMutex);
+        customFree(nextBlock);
+        pthread_mutex_unlock(&memoryAreaListMutex);
+    }
+    // 2) Coalesce with PREV if free
+    if(block->prev != NULL && block->prev->free){
+        BlockMT* prevBlock = block->prev;
+        prevBlock->size = prevBlock->size + block->size;
+        prevBlock->next = block->next;
+        if(prevBlock->next != NULL){
+            prevBlock->next->prev = prevBlock;
+        }
+        pthread_mutex_lock(&memoryAreaListMutex);
+        customFree(block);
+        pthread_mutex_unlock(&memoryAreaListMutex);
+    }
+    pthread_mutex_unlock(&memoryArea->mutex);
+}
+
+void* customMTCalloc(size_t nmemb, size_t size){
+    void* ptr = customMTMalloc(nmemb * size);
+    if(ptr == NULL){
+        return NULL;
+    }
+    memset(ptr, 0, nmemb * size);
+    return ptr;
+}
+
+void* customMTRealloc(void* ptr, size_t size){
+    if(ptr == NULL){
+        return customMTMalloc(size);
+    }
+
+    pthread_mutex_lock(&memoryAreaListMutex);
+    if(memoryAreaList == NULL){
+        printf("<realloc error>: passed non-heap pointer\n");
+        pthread_mutex_unlock(&memoryAreaListMutex);
+        return NULL;
+    }
+    MemoryArea* memoryArea = findMemoryArea(ptr);
+    if(memoryArea == NULL){
+        printf("<realloc error>: passed non-heap pointer\n");
+        pthread_mutex_unlock(&memoryAreaListMutex);
+        return NULL;
+    }
+    pthread_mutex_unlock(&memoryAreaListMutex);
+
+    pthread_mutex_lock(&memoryArea->mutex);
+
+    BlockMT* block = findBlockMT(memoryArea, ptr);
+    if(block == NULL){
+        printf("<realloc error>: passed non-heap pointer\n");
+        pthread_mutex_unlock(&memoryArea->mutex);
+        return NULL;
+    }
+    if(block->free){
+        printf("<realloc error>: passed non-heap pointer\n");
+        pthread_mutex_unlock(&memoryArea->mutex);
+        return NULL;
+    }
+
+    size_t newSize = ALIGN_TO_MULT_OF_4(size);
+    if(block->size == newSize){
+        pthread_mutex_unlock(&memoryArea->mutex);
+        return ptr;
+    }
+    if(block->size < newSize){
+        void* newPtr = customMTMalloc(newSize);
+        if(newPtr == NULL){
+            return NULL;
+        }
+        memcpy(newPtr, ptr, block->size);
+        customMTFree(ptr);
+        return newPtr;
+    }
+
+    // split the block into two blocks
+    pthread_mutex_lock(&memoryAreaListMutex);
+    BlockMT* newBlock = (BlockMT*)customMalloc(sizeof(BlockMT));
+    pthread_mutex_unlock(&memoryAreaListMutex);
+    if(newBlock == NULL){
+        pthread_mutex_unlock(&memoryArea->mutex);
+        return NULL;
+    }
+    block->size = newSize;
+    newBlock->size = block->size - newSize;
+    newBlock->dataPtr = (void*)((char*)block->dataPtr + newSize);
+
+    newBlock->prev = block;
+    newBlock->next = block->next;
+    block->next = newBlock;
+    if (newBlock->next != NULL){
+        newBlock->next->prev = newBlock;
+    }
+    pthread_mutex_unlock(&memoryArea->mutex);
+    return ptr;
 }
