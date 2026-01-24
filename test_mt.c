@@ -7,11 +7,12 @@
 #include <stdlib.h>
 
 void test_single_thread() {
-    printf("Testing single thread\n");
+    // printf("Testing single thread\n");
     heapCreate();
 
     void* ptr = customMTMalloc(1024, 1);
     printf("Allocated %p\n", ptr);
+    // print block list
     // customMTFree(ptr);
     // printf("Freed %p\n", ptr);
     heapKill();
@@ -78,6 +79,7 @@ int test_threads(void) {
 
 
 int main(void) {
+//   test_single_thread();
   test_threads();
   return 0;
 }

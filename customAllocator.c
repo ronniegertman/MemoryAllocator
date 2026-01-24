@@ -93,19 +93,19 @@ void customFree(void *ptr) {
 
     // If blockList is NULL, allocator has no heap blocks yet
     if (blockList == NULL) {
-        printf("<free error>: passed non-heap pointer\n");
+        printf("<free error>: passed non-heap pointer 1\n");
         return;
     }
 
     // Minimal sanity: ptr must be below current program break
     if ((char *)ptr >= heapEnd) {
-        printf("<free error>: passed non-heap pointer\n");
+        printf("<free error>: passed non-heap pointer 2\n");
         return;
     }
 
     Block *block = findBlock(ptr);
     if (block == NULL) {
-        printf("<free error>: passed non-heap pointer\n");
+        printf("<free error>: passed non-heap pointer 3\n");
         return;
     }
 
@@ -236,7 +236,6 @@ void* customRealloc(void* ptr, size_t size){
 }
 
 void freeMemoryArea(MemoryArea* memoryArea){
-    customFree(memoryArea->dataPtr);
     // free the block list
     BlockMT* current = memoryArea->blockList;
     while(current != NULL){
@@ -272,7 +271,7 @@ MemoryArea* createMemoryArea(size_t size){
         return NULL;
     }
     // Initialize the area's block list
-    newMemoryArea->blockList = (void*)customMalloc(sizeof(BlockMT));
+    newMemoryArea->blockList = (BlockMT*)customMalloc(sizeof(BlockMT));
     if(newMemoryArea->blockList == NULL){
         customFree(newMemoryArea->dataPtr);
         customFree(newMemoryArea);
@@ -294,7 +293,6 @@ MemoryArea* createMemoryArea(size_t size){
 }
 
 void heapCreate(){
-    printf("Creating heap\n");
     // pthread_mutex_init(&memoryAreaListMutex, NULL);
     pthread_mutex_lock(&memoryAreaListMutex);
 
@@ -306,7 +304,6 @@ void heapCreate(){
             pthread_mutex_unlock(&memoryAreaListMutex);
             return;
         }
-        printf("Created memory area %p\n", newMemoryArea);
 
         if(memoryAreaList == NULL){
             memoryAreaList = newMemoryArea;
@@ -383,6 +380,7 @@ void* customMTMalloc(size_t size, int threadNumber){
     pthread_mutex_lock(&memoryAreaList->mutex);
     printf("Locked memoryAreaList->mutex in customMTMalloc for thread %d\n", threadNumber);
     size_t newBlockSize = bestBlock->size - ALIGN_TO_MULT_OF_4(size);
+    printf("New block size: %zu\n", newBlockSize);
     bestBlock->free = false;
     if(newBlockSize > 0){
         // split the block into two blocks
@@ -397,16 +395,27 @@ void* customMTMalloc(size_t size, int threadNumber){
             return NULL;
         }
         bestBlock->size = ALIGN_TO_MULT_OF_4(size);
+
         newBlock->size = newBlockSize;
+        newBlock->dataPtr = (void*)((char*)bestBlock->dataPtr + bestBlock->size);
         newBlock->free = true;
+
         newBlock->prev = bestBlock;
         newBlock->next = bestBlock->next;
+        bestBlock->next = newBlock;
+
         if (newBlock->next != NULL){
             newBlock->next->prev = newBlock;
         }
-        newBlock->dataPtr = (void*)((char*)bestBlock->dataPtr + bestBlock->size + 1);
+    }
+    // printing block list
+    BlockMT* current = lastMemoryArea->blockList;
+    while(current != NULL){
+        printf("Block: %p, Size: %zu, Free: %d, DataPtr: %p\n", current, current->size, current->free, current->dataPtr);
+        current = current->next;
     }
     printf("Unlocking memoryAreaList->mutex in customMTMalloc for thread %d\n", threadNumber);
+
     pthread_mutex_unlock(&memoryAreaList->mutex);
     return (void*)(bestBlock->dataPtr);
 }
