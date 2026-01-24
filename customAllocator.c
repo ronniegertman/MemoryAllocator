@@ -82,63 +82,6 @@ static Block* findBlock(void* ptr) {
     return NULL;
 }
 
-// void customFree0(void* ptr){
-//     if (ptr == NULL){
-//         printf("<free error>: passed null pointer\n");
-//         return;
-//     }
-//     void* heapStart = (void*)blockList;
-//     void* heapEnd = sbrk(0);
-//     if(ptr < heapStart || ptr >= heapEnd){
-//         printf("<free error>: passed non-heap pointer 1\n");
-//         return;
-//     }
-
-//     Block* block = findBlock(ptr);
-//     if(block == NULL){
-//         // This is a heap pointer, but not allocated by the allocator
-//         printf("<free error>: passed non-heap pointer 2\n");
-//         return;
-//     }
-
-//     if (block->free) {
-//         // This is a heap pointer, but already freed
-//         printf("<free error>: passed non-heap pointer 3\n");
-//         return;
-//     }
-
-//     block->free = true;
-
-//     if(block->next != NULL && block->next->free){
-//         if(block->next == lastBlock){
-//             lastBlock = block;
-//         }
-//         block->size += block->next->size + sizeof(Block); // new block size includes the header of the second block
-//         block->next = block->next->next;
-//         block->next->prev = block;
-//     }
-//     if(block->prev != NULL && block->prev->free){
-//         if(block == lastBlock){
-//             lastBlock = block->prev;
-//         }
-//         block->prev->size += block->size + sizeof(Block); // new block size includes the header of the original block
-//         block->prev->next = block->next;
-//         block->next->prev = block->prev;
-//     }
-
-//     if (block->prev == NULL) {
-//         blockList = block->next;
-//     }
-
-//     if(lastBlock->free){
-//         void* newLastBlock = lastBlock->prev;
-//         sbrk(-1 * (lastBlock->size + sizeof(Block))); // TODO: check if we can handle sbrk failed
-//         lastBlock = newLastBlock;
-//         return;
-//     }
-// }
-
-
 void customFree(void *ptr) {
     if (ptr == NULL) {
         printf("<free error>: passed null pointer\n");
@@ -351,16 +294,19 @@ MemoryArea* createMemoryArea(size_t size){
 }
 
 void heapCreate(){
-    pthread_mutex_init(&memoryAreaListMutex, NULL);
+    printf("Creating heap\n");
+    // pthread_mutex_init(&memoryAreaListMutex, NULL);
     pthread_mutex_lock(&memoryAreaListMutex);
 
     for (int i = 0; i < 8; i++){
         MemoryArea* newMemoryArea = createMemoryArea(4096);
         if(newMemoryArea == NULL){
+            printf("Failed to create memory area\n");
             freeMemoryAreaList();
             pthread_mutex_unlock(&memoryAreaListMutex);
             return;
         }
+        printf("Created memory area %p\n", newMemoryArea);
 
         if(memoryAreaList == NULL){
             memoryAreaList = newMemoryArea;
@@ -398,44 +344,59 @@ BlockMT* bestFitMT(MemoryArea* memoryArea, size_t size){
     return bestBlock;
 }
 
-void* customMTMalloc(size_t size){
+void* customMTMalloc(size_t size, int threadNumber){
     pthread_mutex_lock(&memoryAreaListMutex);
+    printf("Locked memoryAreaListMutex in customMTMalloc for thread %d\n", threadNumber);
     if(memoryAreaList == NULL){
+        printf("Memory area list is NULL in customMTMalloc for thread %d\n", threadNumber);
         pthread_mutex_unlock(&memoryAreaListMutex);
         return NULL;
     }
 
     BlockMT* bestBlock = NULL;
+    bool queueHeadHasNoSpace = false;
     while(memoryAreaList != NULL){
+        printf("Checking best fit MT for thread %d\n", threadNumber);
         bestBlock = bestFitMT(memoryAreaList, size);
-        if(bestBlock != NULL){
-            break;
+        printf("Best block found for thread %d: %p\n", threadNumber, bestBlock);
+        if(bestBlock == NULL && !queueHeadHasNoSpace){
+            // Add a new memory area to the list
+            printf("Adding new memory area to the list for thread %d\n", threadNumber);
+            lastMemoryArea->next = createMemoryArea(4096);
+            lastMemoryArea = lastMemoryArea->next;
+            queueHeadHasNoSpace = true;
         }
-        // Add a new memory area to the list
-        lastMemoryArea->next = createMemoryArea(4096);
-        lastMemoryArea = lastMemoryArea->next;
         
         // Rotate the memory area list (putting first area last)
         lastMemoryArea->next = memoryAreaList;
         lastMemoryArea = lastMemoryArea->next;
-        lastMemoryArea->next = NULL;
         memoryAreaList = memoryAreaList->next;
+        lastMemoryArea->next = NULL;
+
+        if (bestBlock != NULL){
+            break;
+        }
     }
+    printf("Unlocking memoryAreaListMutex in customMTMalloc for thread %d\n", threadNumber);
     pthread_mutex_unlock(&memoryAreaListMutex);
 
     pthread_mutex_lock(&memoryAreaList->mutex);
+    printf("Locked memoryAreaList->mutex in customMTMalloc for thread %d\n", threadNumber);
     size_t newBlockSize = bestBlock->size - ALIGN_TO_MULT_OF_4(size);
     bestBlock->free = false;
-    bestBlock->size = ALIGN_TO_MULT_OF_4(size);
     if(newBlockSize > 0){
         // split the block into two blocks
         pthread_mutex_lock(&memoryAreaListMutex);
+        printf("Locked memoryAreaListMutex in customMalloc for thread %d\n", threadNumber);
         BlockMT* newBlock = (BlockMT*)customMalloc(sizeof(BlockMT));
+        printf("unlocking memoryAreaListMutex in customMalloc for thread %d\n", threadNumber);
         pthread_mutex_unlock(&memoryAreaListMutex);
         if(newBlock == NULL){
+            printf("Failed to allocate new block in customMalloc for thread %d\n", threadNumber);
             pthread_mutex_unlock(&memoryAreaList->mutex);
             return NULL;
         }
+        bestBlock->size = ALIGN_TO_MULT_OF_4(size);
         newBlock->size = newBlockSize;
         newBlock->free = true;
         newBlock->prev = bestBlock;
@@ -445,6 +406,7 @@ void* customMTMalloc(size_t size){
         }
         newBlock->dataPtr = (void*)((char*)bestBlock->dataPtr + bestBlock->size + 1);
     }
+    printf("Unlocking memoryAreaList->mutex in customMTMalloc for thread %d\n", threadNumber);
     pthread_mutex_unlock(&memoryAreaList->mutex);
     return (void*)(bestBlock->dataPtr);
 }

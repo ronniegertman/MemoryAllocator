@@ -8,6 +8,10 @@ SRC_DIR = .
 OBJ_DIR = .
 BIN_DIR = .
 
+# Add target for test_mt.c
+test_mt: test_mt.c customAllocator.h
+	$(CC) $(CFLAGS) -o test_mt test_mt.c customAllocator.c $(LDFLAGS)
+
 # Source files
 SOURCES = main.c customAllocator.c
 OBJECTS = $(SOURCES:.c=.o)
@@ -26,7 +30,7 @@ $(TARGET): $(OBJECTS)
 
 # Clean build artifacts
 clean:
-	rm -f $(OBJECTS) $(TARGET)
+	rm -f $(OBJECTS) $(TARGET) test_mt
 
 # Rebuild everything
 rebuild: clean all
