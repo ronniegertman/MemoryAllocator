@@ -1,3 +1,4 @@
+#include <asm-generic/errno.h>
 #define _GNU_SOURCE
 #include "customAllocator.h"
 #include <pthread.h>
@@ -6,8 +7,8 @@
 #include <stdint.h> //for intptr_t
 #include <unistd.h> //for sbrk
 #include <string.h> //for memset
-
-//TODO: check if sbrk fails when out of memory
+#include <errno.h> //for errno
+#include <stdlib.h> //for exit
 
 
 #define DEFAULT_MEMORY_AREA_SIZE (4096)
@@ -16,8 +17,15 @@ Block* blockList = NULL; // global
 Block* lastBlock = NULL; // global 
 MemoryArea* memoryAreaList = NULL; // global
 MemoryArea* lastMemoryArea = NULL; // global
+void* heapAtStart = NULL; // global
 pthread_mutex_t memoryAreaListMutex;
-pthread_mutex_t heapSizeModificationMutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t heapSizeModificationMutex;
+
+void freeAllMemoryFail(){
+    printf("<sbrk/brk error>: out of memory\n");
+    brk(heapAtStart);
+    exit(1);
+}
 
 void* bestFit(size_t size){
     Block* current = blockList;
@@ -39,6 +47,9 @@ void* customMalloc(size_t size){
     if(blockList == NULL){ // empty heap
         newBlock = (Block*)sbrk((intptr_t)(blockSize + sizeof(Block)));
         if(newBlock == SBRK_FAIL){
+            if (errno == ENOMEM){
+                freeAllMemoryFail();
+            }
             return NULL;
         }
         newBlock->size = blockSize;
@@ -59,6 +70,9 @@ void* customMalloc(size_t size){
     // need to allocate new memory in the heap
     newBlock = (Block*)sbrk((intptr_t)(blockSize + sizeof(Block)));
     if(newBlock == SBRK_FAIL){
+        if (errno == ENOMEM){
+            freeAllMemoryFail();
+        }
         return NULL;
     }
     newBlock->size = blockSize;
@@ -94,6 +108,12 @@ void customFree(void *ptr) {
 
     // Avoid void* comparisons
     char *heapEnd = (char *)sbrk(0);
+    if(heapEnd == SBRK_FAIL){
+        if (errno == ENOMEM){
+            freeAllMemoryFail();
+        }
+        return;
+    }
 
     // If blockList is NULL, allocator has no heap blocks yet
     if (blockList == NULL) {
@@ -160,7 +180,12 @@ void customFree(void *ptr) {
         // Shrink by the size of the last free block + header
         intptr_t shrink = (intptr_t)(sizeof(Block) + block->size);
         if (shrink > 0) {
-            sbrk(-shrink); // if you want: check (void*)-1 for failure
+            if(sbrk(-shrink) == SBRK_FAIL){
+                if (errno == ENOMEM){
+                    freeAllMemoryFail();
+                }
+                return;
+            }
         }
     }
 }
@@ -183,6 +208,12 @@ void* customRealloc(void* ptr, size_t size){
 
     // Avoid void* comparisons
     char *heapEnd = (char *)sbrk(0);
+    if(heapEnd == SBRK_FAIL){
+        if (errno == ENOMEM){
+            freeAllMemoryFail();
+        }
+        return NULL;
+    }
 
     // Minimal sanity: ptr must be below current program break
     if ((char *)ptr >= heapEnd || (char *)ptr < (char *)blockList) {
@@ -207,7 +238,12 @@ void* customRealloc(void* ptr, size_t size){
             if(newSize == oldSize){
                 return ptr;
             }
-            sbrk(newSize - oldSize);
+            if(sbrk(newSize - oldSize) == SBRK_FAIL){
+                if (errno == ENOMEM){
+                    freeAllMemoryFail();
+                }
+                return NULL;
+            }
             lastBlock->size = newSize;
             return ptr;
         }
@@ -225,7 +261,12 @@ void* customRealloc(void* ptr, size_t size){
             if(newSize == oldSize){
                 return ptr;
             }
-            sbrk(newSize - oldSize);
+            if(sbrk(newSize - oldSize) == SBRK_FAIL){
+                if (errno == ENOMEM){
+                    freeAllMemoryFail();
+                }
+                return NULL;
+            }
             lastBlock->size = newSize;
             return ptr;
         }
@@ -241,12 +282,15 @@ void* customRealloc(void* ptr, size_t size){
 
 void freeMemoryArea(MemoryArea* memoryArea){
     // free the block list
+    pthread_mutex_lock(&memoryArea->mutex);
     BlockMT* current = memoryArea->blockList;
     while(current != NULL){
         BlockMT* next = current->next;
         customFree(current);
         current = next;
     }
+    pthread_mutex_unlock(&memoryArea->mutex);
+    pthread_mutex_destroy(&memoryArea->mutex);
     // free the memory area
     customFree(memoryArea->dataPtr);
     customFree(memoryArea);
@@ -260,6 +304,7 @@ void freeMemoryAreaList(){
         current = next;
     }
     memoryAreaList = NULL;
+    lastMemoryArea = NULL;
 }
 
 
@@ -302,6 +347,12 @@ MemoryArea* createMemoryArea(size_t size){
 }
 
 void heapCreate(){
+    heapAtStart = sbrk(0);
+    if(heapAtStart == SBRK_FAIL){
+        exit(1);
+    }
+    pthread_mutex_init(&heapSizeModificationMutex, NULL);
+
     pthread_mutexattr_t attr;
     pthread_mutexattr_init(&attr);
     pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
@@ -356,7 +407,7 @@ BlockMT* bestFitMT(MemoryArea* memoryArea, size_t size){
     return bestBlock;
 }
 
-void* customMTMalloc(size_t size, int threadId){
+void* customMTMalloc(size_t size){
     if(size > DEFAULT_MEMORY_AREA_SIZE){
         printf("<malloc error>: requested size is too large\n");
         return NULL;
@@ -453,7 +504,7 @@ BlockMT* findBlockMT(MemoryArea* memoryArea, void* ptr){
     return NULL;
 }
 
-void customMTFree(void* ptr, int threadId){
+void customMTFree(void* ptr){
     if(ptr == NULL){
         printf("<free error>: passed null pointer\n");
         return;
@@ -514,8 +565,8 @@ void customMTFree(void* ptr, int threadId){
     pthread_mutex_unlock(&memoryArea->mutex);
 }
 
-void* customMTCalloc(size_t nmemb, size_t size, int threadId){
-    void* ptr = customMTMalloc(nmemb * size, threadId);
+void* customMTCalloc(size_t nmemb, size_t size){
+    void* ptr = customMTMalloc(nmemb * size);
     if(ptr == NULL){
         return NULL;
     }
@@ -523,9 +574,9 @@ void* customMTCalloc(size_t nmemb, size_t size, int threadId){
     return ptr;
 }
 
-void* customMTRealloc(void* ptr, size_t size, int threadId){
+void* customMTRealloc(void* ptr, size_t size){
     if(ptr == NULL){
-        return customMTMalloc(size, threadId);
+        return customMTMalloc(size);
     }
 
     pthread_mutex_lock(&memoryAreaListMutex);
@@ -566,14 +617,14 @@ void* customMTRealloc(void* ptr, size_t size, int threadId){
 
     // Realloc to larger size
     if(block->size < newSize){
-        void* newPtr = customMTMalloc(newSize, threadId);
+        void* newPtr = customMTMalloc(newSize);
         if(newPtr == NULL){
             pthread_mutex_unlock(&memoryArea->mutex);
             pthread_mutex_unlock(&memoryAreaListMutex);
             return NULL;
         }
         memcpy(newPtr, ptr, block->size);
-        customMTFree(ptr, threadId);
+            customMTFree(ptr);
         pthread_mutex_unlock(&memoryArea->mutex);
         pthread_mutex_unlock(&memoryAreaListMutex);
         return newPtr;

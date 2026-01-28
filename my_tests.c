@@ -1,0 +1,399 @@
+#define _GNU_SOURCE
+#include <string.h>
+#include <unistd.h> //for sbrk
+#include "customAllocator.h"
+#include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+void test_malloc_free_1() {
+  void* heapStart = sbrk(0);
+  void* ptr = customMalloc(4);
+  if(ptr == NULL){
+      printf("malloc failed\n");
+      return;
+  }
+  void* newHeapStart = sbrk(0);
+  memset(ptr, 0, 4);
+  customFree(ptr);
+  printf("heapStart: %p, newHeapStart: %p\n", heapStart, newHeapStart);
+  printf("ptr: %p\n", ptr);
+}
+
+void test_malloc_free_2() {
+  void* heapStart = sbrk(0);
+  void* ptr1 = customMalloc(4);
+  void* heapAfter1 = sbrk(0);
+  void* ptr2 = customMalloc(4);
+  void* heapAfter2 = sbrk(0);
+  if(ptr1 == NULL || ptr2 == NULL){
+      printf("malloc failed\n");
+      return;
+  }
+  memset(ptr1, 0, 4);
+  memset(ptr2, 0, 4);
+  customFree(ptr1);
+  void* heapAfterRemove1 = sbrk(0);
+  void* ptr3 = customMalloc(4);
+  if(ptr3 == NULL){
+      printf("malloc failed\n");
+      return;
+  }
+  void* heapAfter3 = sbrk(0);
+  memset(ptr3, 0, 4);
+  customFree(ptr2);
+  customFree(ptr3);
+  void* heapAtEnd = sbrk(0);
+  printf("heapStart: %p, heapAfter1: %p, heapAfter2: %p, heapAfterRemove1: %p, heapAfter3: %p, heapAtEnd: %p\n", heapStart, heapAfter1, heapAfter2, heapAfterRemove1, heapAfter3, heapAtEnd);
+  printf("ptr1: %p, ptr2: %p, ptr3: %p\n", ptr1, ptr2, ptr3);
+}
+
+void test_malloc_free_3() {
+  void* heapStart = sbrk(0);
+  void* ptr1 = customMalloc(4);
+  void* heapAfter1 = sbrk(0);
+  void* ptr2 = customMalloc(8);
+  void* heapAfter2 = sbrk(0);
+  void* ptr3 = customMalloc(4);
+  void* heapAfter3 = sbrk(0);
+  if(ptr1 == NULL || ptr2 == NULL || ptr3 == NULL){
+      printf("malloc failed\n");
+      return;
+  }
+  memset(ptr1, 0, 4);
+  memset(ptr2, 0, 8);
+  memset(ptr3, 0, 4);
+  customFree(ptr1);
+  void* heapAfterRemove1 = sbrk(0);
+  customFree(ptr2);
+  void* heapAfterRemove2 = sbrk(0);
+  void* ptr4 = customMalloc(12);
+  customFree(ptr3);
+  customFree(ptr4);
+  void* heapAtEnd = sbrk(0);
+  printf("heapStart: %p, heapAfter1: %p, heapAfter2: %p, heapAfter3: %p, heapAfterRemove1: %p, heapAfterRemove2: %p, heapAtEnd: %p\n", heapStart, heapAfter1, heapAfter2, heapAfter3, heapAfterRemove1, heapAfterRemove2, heapAtEnd);
+  printf("ptr1: %p, ptr2: %p, ptr3: %p, ptr4: %p\n", ptr1, ptr2, ptr3, ptr4);
+}
+
+void test_malloc_free_4() {
+  void* heapStart = sbrk(0);
+  void* ptr1 = customMalloc(7);    // block 1
+  void* ptr2 = customMalloc(16);   // block 2
+  void* ptr3 = customMalloc(12);   // block 3
+  void* ptr4 = customMalloc(20);   // block 4
+  void* heapAfter4 = sbrk(0);
+
+  if(ptr1 == NULL || ptr2 == NULL || ptr3 == NULL || ptr4 == NULL){
+      printf("malloc failed\n");
+      return;
+  }
+
+  memset(ptr1, 0xA1, 7);
+  memset(ptr2, 0xB2, 16);
+  memset(ptr3, 0xC3, 12);
+  memset(ptr4, 0xD4, 20);
+
+  customFree(ptr1); // free block 1
+  customFree(ptr3); // free block 3
+
+  void* heapAfterFree1And3 = sbrk(0);
+
+  // Now allocate a block of size that fits in the smaller free space (block 1, 8 bytes), e.g., 6 bytes
+  void* ptr5 = customMalloc(6);
+
+  void* heapAfter5 = sbrk(0);
+
+  // Check which block ptr5 was mapped to
+  printf("ptr1: %p, ptr2: %p, ptr3: %p, ptr4: %p, ptr5: %p\n", ptr1, ptr2, ptr3, ptr4, ptr5);
+  printf("heapStart: %p, heapAfter4: %p, heapAfterFree1And3: %p, heapAfter5: %p\n", heapStart, heapAfter4, heapAfterFree1And3, heapAfter5);
+
+  if (ptr5 == ptr1) {
+      printf("ptr5 was mapped to freed block1's memory.\n");
+  } else if (ptr5 == ptr3) {
+      printf("ptr5 was mapped to freed block3's memory.\n");
+  } else {
+      printf("ptr5 was mapped to a different memory location.\n");
+  }
+
+  // Cleanup: free all
+  customFree(ptr2);
+  customFree(ptr4);
+  customFree(ptr5);
+}
+void test_calloc(){
+  void* heapStart = sbrk(0);
+  void* ptr1 = customCalloc(4, 4);
+  void* heapAfter1 = sbrk(0);
+  if(ptr1 == NULL){
+      printf("calloc failed\n");
+      return;
+  }
+  memset(ptr1, 0, 4 * 4);
+  customFree(ptr1);
+  void* heapAtEnd = sbrk(0);
+  printf("heapStart: %p, heapAfter1: %p, heapAtEnd: %p\n", heapStart, heapAfter1, heapAtEnd);
+  printf("ptr1: %p\n", ptr1);
+}
+
+// genreate  function tests for realloc:
+// 1. samity
+// 2. create a few blocks and shrink the last block
+// 3. shrink a block from the middle
+// 4. extend block from the middle 
+// 5. extend last block
+
+// 1. Sanity test for realloc: realloc on NULL ptr acts as malloc, realloc with size 0 acts as free
+void test_realloc_sanity() {
+  printf("==== test_realloc_sanity ====\n");
+  void* heapStart = sbrk(0);
+
+  void* ptr = customRealloc(NULL, 32); // should allocate 32 bytes
+  if (!ptr) {
+      printf("realloc(NULL, 32) failed\n");
+      return;
+  }
+  memset(ptr, 0, 32);
+
+  void* heapAfterAlloc = sbrk(0);
+  ptr = customRealloc(ptr, 34);
+  void* heapAfterRealloc = sbrk(0);
+
+  // realloc with size 0 should free
+  customRealloc(ptr, 0);
+  void* heapAfterFree = sbrk(0);
+
+  printf("heapStart: %p, heapAfterAlloc: %p, heapAfterRealloc: %p, heapAfterFree: %p\n", heapStart, heapAfterAlloc, heapAfterRealloc, heapAfterFree);
+}
+
+// 2. Create a few blocks and shrink the last block
+void test_realloc_shrink_last_block() {
+  printf("==== test_realloc_shrink_last_block ====\n");
+  void* heapStart = sbrk(0);
+
+  void* p1 = customMalloc(32);
+  void* p2 = customMalloc(40);
+  void* p3 = customMalloc(48);
+
+  void* heapAfter = sbrk(0);
+
+  // Shrink last block
+  void* p3_re = customRealloc(p3, 16);
+
+  void* heapAfterShrink = sbrk(0);
+
+  printf("p1: %p, p2: %p, p3(original): %p, p3(shrunk): %p\n", p1, p2, p3, p3_re);
+  printf("heapStart: %p, heapAfterAlloc: %p, heapAfterShrink: %p\n", heapStart, heapAfter, heapAfterShrink);
+
+  customFree(p1);
+  customFree(p2);
+  customFree(p3_re);
+}
+
+// 3. Shrink a block from the middle
+void test_realloc_shrink_middle_block() {
+  printf("==== test_realloc_shrink_middle_block ====\n");
+  void* heapStart = sbrk(0);
+
+  void* p1 = customMalloc(32);
+  void* p2 = customMalloc(40);
+  void* p3 = customMalloc(48);
+
+  void* heapAfter = sbrk(0);
+
+  // Shrink p2 (not last block)
+  void* p2_shrunk = customRealloc(p2, 16);
+
+  void* heapAfterShrink = sbrk(0);
+
+  printf("p1: %p, p2(original): %p, p2(shrunk): %p, p3: %p\n", p1, p2, p2_shrunk, p3);
+  printf("heapStart: %p, heapAfterAlloc: %p, heapAfterShrink: %p\n", heapStart, heapAfter, heapAfterShrink);
+
+  customFree(p1);
+  customFree(p2_shrunk);
+  customFree(p3);
+}
+
+// 4. Extend block from the middle
+void test_realloc_extend_middle_block() {
+  printf("==== test_realloc_extend_middle_block ====\n");
+  void* heapStart = sbrk(0);
+
+  void* p1 = customMalloc(24);
+  void* p2 = customMalloc(28);
+  void* p3 = customMalloc(32);
+
+  void* heapAfter = sbrk(0);
+
+  // Extend p2 (not last block)
+  void* p2_extended = customRealloc(p2, 64);
+
+  void* heapAfterExtend = sbrk(0);
+
+  printf("p1: %p, p2(original): %p, p2(extended): %p, p3: %p\n", p1, p2, p2_extended, p3);
+  printf("heapStart: %p, heapAfterAlloc: %p, heapAfterExtend: %p\n", heapStart, heapAfter, heapAfterExtend);
+
+  customFree(p1);
+  customFree(p2_extended);
+  customFree(p3);
+}
+
+// 5. Extend last block
+void test_realloc_extend_last_block() {
+  printf("==== test_realloc_extend_last_block ====\n");
+  void* heapStart = sbrk(0);
+
+  void* p1 = customMalloc(16);
+  void* p2 = customMalloc(20);
+  void* p3 = customMalloc(24);
+
+  void* heapAfter = sbrk(0);
+
+  // Grow p3 (last block)
+  void* p3_large = customRealloc(p3, 100);
+
+  void* heapAfterExtend = sbrk(0);
+
+  printf("p1: %p, p2: %p, p3(original): %p, p3(extended): %p\n", p1, p2, p3, p3_large);
+  printf("heapStart: %p, heapAfterAlloc: %p, heapAfterExtend: %p\n", heapStart, heapAfter, heapAfterExtend);
+
+  customFree(p1);
+  customFree(p2);
+  customFree(p3_large);
+}
+
+
+
+void test_single_thread() {
+    heapCreate();
+
+    void* ptr = customMTMalloc(1024);
+    printf("Allocated %p\n", ptr);
+    customMTFree(ptr);
+    printf("Freed %p\n", ptr);
+    heapKill();
+}
+
+void test_single_thread_realloc() {
+    heapCreate();
+
+    void* ptr = customMTMalloc(1024);
+    printf("Allocated %p\n", ptr);
+    memset(ptr, 0, 1024);
+    
+    void* ptr2 = customMTRealloc(ptr, 1024);
+    printf("Reallocated %p\n", ptr2);
+    memset(ptr2, 1, 2048);
+
+    customMTFree(ptr2);
+    printf("Freed %p\n", ptr2);
+
+    heapKill();
+}
+
+
+typedef struct {
+  pthread_barrier_t *start_barrier;
+  int threadNumber;
+  // put other args here
+} worker_arg_t;
+
+void *worker(void *p) {
+  worker_arg_t *a = (worker_arg_t *)p;
+
+  // Thread is created, now wait until everyone is ready.
+  pthread_barrier_wait(a->start_barrier);
+
+  // ---- real work starts here ----
+  // your code that uses your allocator-sensitive logic
+
+  printf("Thread %d allocating...\n", a->threadNumber);
+  void* ptr = customMTCalloc(4, 1024);
+  printf("Thread %d allocated %p\n", a->threadNumber, ptr);
+  memset(ptr, 0, 4096);
+  customMTFree(ptr);
+  printf("Thread %d freed %p\n", a->threadNumber, ptr);
+
+  return NULL;
+}
+
+
+// worker that tests customMTMalloc, customMTRealloc, customMTFree
+void *worker_realloc(void *p) {
+  static const size_t FIRST_SIZE = 512;
+  static const size_t SECOND_SIZE = 1024;
+
+  worker_arg_t *a = (worker_arg_t *)p;
+  pthread_barrier_wait(a->start_barrier);
+
+  // Malloc
+  printf("Thread %d allocating...\n", a->threadNumber);
+  void* ptr = customMTMalloc(FIRST_SIZE);
+  printf("Thread %d allocated %p\n", a->threadNumber, ptr);
+  memset(ptr, 0, FIRST_SIZE);
+
+  // // Realloc
+  void* ptr2 = customMTRealloc(ptr, SECOND_SIZE);
+  printf("Thread %d reallocated %p\n", a->threadNumber, ptr2);
+  memset(ptr2, 1, SECOND_SIZE);
+
+  // Free
+  customMTFree(ptr2);
+  printf("Thread %d freed %p\n", a->threadNumber, ptr2);
+
+  return NULL;
+}
+
+int test_threads(void* worker_func(void*)) {
+  const int N = 200;
+  pthread_t th[N];
+  worker_arg_t args[N];
+
+  pthread_barrier_t start_barrier;
+  pthread_barrier_init(&start_barrier, NULL, N + 1); // +1 for main
+
+  // Optional: "warm up" anything that might allocate *before* you start.
+  // e.g., call functions you know will be used later, do a dummy malloc/free, etc.
+
+  for (int i = 0; i < N; i++) { // create N threads
+    args[i].start_barrier = &start_barrier;
+    args[i].threadNumber = i + 1;
+    if (pthread_create(&th[i], NULL, worker_func, &args[i]) != 0) {
+      perror("pthread_create");
+      exit(1);
+    }
+  }
+
+  // At this point, threads exist but are stuck at the barrier.
+  // If pthread/libc needed to allocate during thread creation, it already happened.
+
+  // If you have a “switch” to enter your allocator-sensitive phase, do it now.
+  heapCreate();
+
+  // Release all workers to start real work:
+  pthread_barrier_wait(&start_barrier);
+
+  for (int i = 0; i < N; i++) pthread_join(th[i], NULL);
+  pthread_barrier_destroy(&start_barrier);
+
+  heapKill();
+  return 0;
+}
+
+
+int main(void) {
+  test_malloc_free_1();
+  test_malloc_free_2();
+  test_malloc_free_3();
+  test_malloc_free_4();
+  test_calloc();
+  test_realloc_sanity();
+  test_realloc_shrink_last_block();
+  test_realloc_shrink_middle_block();
+  test_realloc_extend_middle_block();
+  test_realloc_extend_last_block();
+  test_single_thread();
+  test_single_thread_realloc();
+  test_threads(worker);
+  test_threads(worker_realloc);
+  return 0;
+}

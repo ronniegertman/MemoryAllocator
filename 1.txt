@@ -1,11 +1,12 @@
-#define _GNU_SOURCE
-#include "customAllocator.h"
-#include <stdint.h>
-#include <stdio.h>
-#include <string.h> //for memset
-#include <unistd.h> //for sbrk
+cursor agent auto
+generate different tests for malloc and calloc:
+1. Sanity
+2. 2 malloc, free the first and malloc again
+3. 3 malloc, free the first 2 and malloc again
+4. 4 malloc, free 1 and 3, Now allocate a block of size that fits in the smaller free space (block 1, 8 bytes), e.g., 6 bytes,
+Check which block ptr5 was mapped to
 
-
+answer:
 void test_malloc_free_1() {
     void* heapStart = sbrk(0);
     void* ptr = customMalloc(4);
@@ -120,6 +121,8 @@ void test_malloc_free_4() {
     customFree(ptr4);
     customFree(ptr5);
 }
+
+generate sanity check for calloc:
 void test_calloc(){
     void* heapStart = sbrk(0);
     void* ptr1 = customCalloc(4, 4);
@@ -135,6 +138,7 @@ void test_calloc(){
     printf("ptr1: %p\n", ptr1);
 }
 
+
 // genreate  function tests for realloc:
 // 1. samity
 // 2. create a few blocks and shrink the last block
@@ -142,6 +146,8 @@ void test_calloc(){
 // 4. extend block from the middle 
 // 5. extend last block
 
+
+answer:
 // 1. Sanity test for realloc: realloc on NULL ptr acts as malloc, realloc with size 0 acts as free
 void test_realloc_sanity() {
     printf("==== test_realloc_sanity ====\n");
@@ -262,10 +268,99 @@ void test_realloc_extend_last_block() {
 }
 
 
+create enviornemtn and tests for running multithreaded. Use barrier
+ 
+answer:
+typedef struct {
+  pthread_barrier_t *start_barrier;
+  int threadNumber;
+  // put other args here
+} worker_arg_t;
 
+void *worker(void *p) {
+  worker_arg_t *a = (worker_arg_t *)p;
 
+  // Thread is created, now wait until everyone is ready.
+  pthread_barrier_wait(a->start_barrier);
 
-int main() {
-    test_realloc_extend_last_block();
-    return 0;
+  // ---- real work starts here ----
+  // your code that uses your allocator-sensitive logic
+
+  printf("Thread %d allocating...\n", a->threadNumber);
+  void* ptr = customMTCalloc(4, 1024);
+  printf("Thread %d allocated %p\n", a->threadNumber, ptr);
+  memset(ptr, 0, 4096);
+  customMTFree(ptr);
+  printf("Thread %d freed %p\n", a->threadNumber, ptr);
+
+  return NULL;
 }
+
+
+// worker that tests customMTMalloc, customMTRealloc, customMTFree
+void *worker_realloc(void *p) {
+  static const size_t FIRST_SIZE = 512;
+  static const size_t SECOND_SIZE = 1024;
+
+  worker_arg_t *a = (worker_arg_t *)p;
+  pthread_barrier_wait(a->start_barrier);
+
+  // Malloc
+  printf("Thread %d allocating...\n", a->threadNumber);
+  void* ptr = customMTMalloc(FIRST_SIZE);
+  printf("Thread %d allocated %p\n", a->threadNumber, ptr);
+  memset(ptr, 0, FIRST_SIZE);
+
+  // // Realloc
+  void* ptr2 = customMTRealloc(ptr, SECOND_SIZE);
+  printf("Thread %d reallocated %p\n", a->threadNumber, ptr2);
+  memset(ptr2, 1, SECOND_SIZE);
+
+  // Free
+  customMTFree(ptr2);
+  printf("Thread %d freed %p\n", a->threadNumber, ptr2);
+
+  return NULL;
+}
+
+int test_threads(void) {
+  const int N = 200;
+  pthread_t th[N];
+  worker_arg_t args[N];
+
+  pthread_barrier_t start_barrier;
+  pthread_barrier_init(&start_barrier, NULL, N + 1); // +1 for main
+
+  // Optional: "warm up" anything that might allocate *before* you start.
+  // e.g., call functions you know will be used later, do a dummy malloc/free, etc.
+
+  for (int i = 0; i < N; i++) {
+    args[i].start_barrier = &start_barrier;
+    args[i].threadNumber = i + 1;
+    if (pthread_create(&th[i], NULL, worker, &args[i]) != 0) {
+      perror("pthread_create");
+      exit(1);
+    }
+  }
+
+  // At this point, threads exist but are stuck at the barrier.
+  // If pthread/libc needed to allocate during thread creation, it already happened.
+
+  // If you have a “switch” to enter your allocator-sensitive phase, do it now.
+  heapCreate();
+
+  // Release all workers to start real work:
+  pthread_barrier_wait(&start_barrier);
+
+  for (int i = 0; i < N; i++) pthread_join(th[i], NULL);
+  pthread_barrier_destroy(&start_barrier);
+
+  heapKill();
+  return 0;
+}
+
+
+
+
+
+
